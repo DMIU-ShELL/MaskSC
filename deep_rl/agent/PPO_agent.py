@@ -427,6 +427,10 @@ class DetectLLAgent(LLAgent):
     def __init__(self, config):
         LLAgent.__init__(self, config)
         self.embedding_table = {}   # contains Wasserstein task embeddings that the agent has experienced so far.
+        self._emb_indices = []
+        self._emb_matrix = None
+        self._emb_row = {}
+        self.device = 'cuda'
 
         # Construct detect module
         self.detect = config.detect_fn(
@@ -449,47 +453,101 @@ class DetectLLAgent(LLAgent):
 
     def extract_sar(self):
         """Extracts (state, action, reward) tuples from the replay buffer
-        and preprocesses them for further use.
+        and preprocesses them for further use. Updated to work optimally with torch.
 
         - Handles both discrete and continuous action spaces.
         - Ensures consistent shapes for concatenation.
         """
-
         states, actions, rewards, _, _ = self.data_buffer.sample()
-        processed_data = []
 
-        for state, action, reward in zip(states, actions, rewards):
-            # move tensors to numpy
-            if isinstance(state, torch.Tensor):
-                state = state.cpu().numpy()
-            if isinstance(action, torch.Tensor):
-                action = action.cpu().numpy()
-            if isinstance(reward, torch.Tensor):
-                reward = reward.cpu().numpy()
+        # Ensure torch tensors
+        if not isinstance(states, torch.Tensor):
+            states = torch.as_tensor(states)
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.as_tensor(actions)
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.as_tensor(rewards)
 
-            state_array = np.array(state).ravel()
-            action_array = np.array(action)
+        # Flatten states to [B, state_dim_flat]
+        states = states.view(states.shape[0], -1)
 
-            # Ensure correct shape for action
-            if isinstance(self.task.action_space, gym.spaces.Discrete):
-                action_array = action_array.reshape(1,)
-            else:
-                action_array = action_array.reshape(self.task.action_dim)
+        # Actions: [B, 1] for discrete, [B, action_dim] for continuous
+        if isinstance(self.task.action_space, gym.spaces.Discrete):
+            actions = actions.view(actions.shape[0], 1)
+        else:
+            actions = actions.view(actions.shape[0], self.task.action_dim)
 
-            reward_array = np.array(reward).reshape(1,)
+        # Rewards: [B, 1]
+        rewards = rewards.view(rewards.shape[0], 1)
 
-            sar_entry = np.concatenate([state_array, action_array, reward_array])
-            processed_data.append(sar_entry)
+        sar = torch.cat([states, actions, rewards], dim=1)
 
-        return np.array(processed_data)
+        # If detect.lwe requires numpy:
+        return sar.detach()         # If replay buffer returns CPU tensors, we can push to GPU once here: return sar.detach().to(agent.detect.device, non_blocking=True)
 
     def compute_task_embedding(self, sar_data, action_space_size):
         """
         Function for computing the task embedding based on the current
         batch of SAR data derived from the replay buffer.
         """
-
-        task_embedding = self.detect.lwe(sar_data, action_space_size)
+        with torch.no_grad():
+            task_embedding = self.detect.lwe(sar_data, action_space_size)
         self.new_task_emb = task_embedding
         self.task_emb_size = len(task_embedding)
         return task_embedding
+
+    def _update_embedding(self, task_idx: int, new_emb, ema: float = 0.5):
+        if not isinstance(new_emb, torch.Tensor):
+            new_emb = torch.as_tensor(new_emb, device=self.device, dtype=torch.float32)
+        else:
+            new_emb = new_emb.to(self.device, dtype=torch.float32)
+
+        old = self.embedding_table[task_idx]
+        if old is None:
+            updated = new_emb
+            is_new = True
+        else:
+            updated = ema * old + (1 - ema) * new_emb
+            is_new = False
+
+        updated = F.normalize(updated, dim=0, eps=1e-8) # Most likely thing to break the system is right here
+        self.embedding_table[task_idx] = updated
+
+        if is_new:
+            row = len(self._emb_indices)
+            self._emb_indices.append(task_idx)
+            self._emb_row[task_idx] = row
+            if self._emb_matrix is None:
+                self._emb_matrix = updated.unsqueeze(0)
+            else:
+                self._emb_matrix = torch.cat([self._emb_matrix, updated.unsqueeze(0)], dim=0)
+        else:
+            row = self._emb_row[task_idx]
+            self._emb_matrix[row] = updated
+
+    @torch.no_grad()
+    def select_similar(self, task_idx: int, threshold: float = 0.5, topk=None):
+        curr = self.embedding_table[task_idx]
+        if curr is None or self._emb_matrix is None:
+            return [], None  # no sims
+
+        sims = self._emb_matrix @ curr  # [N]
+        # exclude current task from selection (self-similarity)
+        row = self._emb_row.get(task_idx, None)
+        if row is not None:
+            sims = sims.clone()
+            sims[row] = -float("inf")
+
+        mask = sims > threshold
+        pos = torch.nonzero(mask, as_tuple=False).flatten()
+        if pos.numel() == 0:
+            return [], sims
+
+        sel_sims = sims[pos]
+        order = torch.argsort(sel_sims, descending=True)
+        pos = pos[order]
+        if topk is not None:
+            pos = pos[:topk]
+
+        selected = [self._emb_indices[i] for i in pos.tolist()]
+        return selected, sims

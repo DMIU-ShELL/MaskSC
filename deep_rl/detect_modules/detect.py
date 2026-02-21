@@ -25,7 +25,7 @@ import torch.optim as optim
 from sklearn.random_projection import GaussianRandomProjection, SparseRandomProjection
 
 class Detect:
-    def __init__(self, reference_num, input_dim, action_dim, num_samples, reference=200,  device='cpu',title = '', num_iter=10, one_hot=True, normalized=True, demo=True):
+    def __init__(self, reference_num, input_dim, action_dim, num_samples, reference=200,  device='cuda', title = '', num_iter=10, one_hot=True, normalized=True, demo=True):
         assert reference is not None, f'Reference not found.'
         self.ref = None
         self.device = device
@@ -38,8 +38,10 @@ class Detect:
         self.input_dim = input_dim
         self.reference_num = reference_num
         self.action_dim = action_dim
-        
 
+        self._b = None
+        self._a_cache = {}  # batch_size -> a
+        
         self.embeddings = []
         self.rewards = []
 
@@ -56,14 +58,23 @@ class Detect:
         '''A setter method, for manually setting and updating the reference for calculating
         the tasks embeddings.'''
         torch.manual_seed(98)
-        reference = torch.rand(some_reference_num, (a_task_observation_dim + some_action_dim + 1))#Plus one which is the reward.
-        self.ref = reference
+        reference = torch.rand(some_reference_num, (a_task_observation_dim + some_action_dim + 1), device=self.device)#Plus one which is the reward.
+        self.ref = reference.float()
+        ref_size = self.ref.shape[0]
+        self._b = torch.full((ref_size,), 1.0 / ref_size, device=self.device)
 
     def get_reference(self):
         '''A getter method for accessing the reference which is used to calculate the task
         embeddings'''
         return self.ref
 
+    def _get_a(self, n):
+        a = self._a_cache.get(n)
+        if a is None:
+            a = torch.full((n,), 1.0 / n, device=self.device)
+            self._a_cache[n] = a
+        return a
+        
     def set_num_samples(self, a_num_samples):
         '''A setter method for manually setting the num of samples'''
         self.num_samples = a_num_samples
@@ -77,57 +88,62 @@ class Detect:
         pre_calc_embedding_size = a_reference_num * (an_inputdim + some_action_dim + 1)#Plus one which is the reward.
         return pre_calc_embedding_size
 
-    def preprocess_dataset(self, X, some_task_action_space_size):
-        '''Function that preprpcess the Data-Batch of SAR before calcuting the embedding'''
-        if self.num_samples is not None and len(X) > self.num_samples:
-            idxs = np.sort(np.random.choice(len(X), self.num_samples, replace=False))
-            sampler = SubsetRandomSampler(idxs)
-            loader = DataLoader(X, sampler=sampler, batch_size=64)
-        else:
-            ## No subsampling
-            loader = DataLoader(X, batch_size=64)
-            
-        X = []
-        q=0
-        for batch in loader:
-            q = q+1
-            X.append(batch.squeeze().view(batch.shape[0],-1))
-        X = torch.cat(X).to(self.device)
+    def preprocess_dataset(self, X, action_space_size):
+        # X can be numpy or torch; keep it torch
+        if not isinstance(X, torch.Tensor):
+            X = torch.as_tensor(X)
 
-        img = X[:,:self.input_dim]
-        act = X[:,self.input_dim:-1]
-        reward = X[:,-1].unsqueeze(1)
+        # Optional subsample (no DataLoader needed)
+        if self.num_samples is not None and X.shape[0] > self.num_samples:
+            idx = torch.randperm(X.shape[0], device=X.device)[:self.num_samples]
+            X = X.index_select(0, idx)
+
+        X = X.to(self.device).float()
+
+        img = X[:, :self.input_dim]
+        act = X[:, self.input_dim:-1]
+        reward = X[:, -1:].view(-1, 1)
 
         if self.normalized:
-            mean = torch.mean(img.float())
-            std = torch.std(img.float())
-            img = (img.float()-mean)/std
-        if self.oh:
-            act_oh = torch.zeros(X.shape[0], some_task_action_space_size)
-      
-            for i in range(act.shape[0]):
-                act_oh [i,int(act[i])]=1
-            act = act_oh.to(self.device)
-        return torch.cat((img, act, reward), dim=1).float()
+            # (Your original normalizes globally; keeping that behavior)
+            mean = img.mean()
+            std = img.std().clamp_min(1e-8)
+            img = (img - mean) / std
 
-    def lwe(self, X, some_task_action_space_size):
-        '''Calculates the Embedding for a given Data-Batch of SAR
-        Returns a 1D Tensor with the calculated Embedding'''
-        X = self.preprocess_dataset(X, some_task_action_space_size)
-        #print("PrePRocess_SAR_DETECT:", X)
-        #print("What we actually use form the data we give:", X.shape)
-        ref_size = self.ref.shape[0]
-        C = ot.dist(X.cpu(), self.ref).cpu().numpy()
-        # Calculating the transport plan
-        gamma = torch.from_numpy(ot.emd(ot.unif(X.shape[0]), ot.unif(ref_size), C, numItermax=700000)).float()
-        # Calculating the transport map via barycenter projection /gamma.sum(dim=0).unsqueeze(1)
-        f=(torch.matmul((ref_size*gamma).T,X.cpu())-self.ref)/np.sqrt(ref_size)
-        return f.ravel()
+        if self.oh:
+            # assume discrete actions stored as scalar in act
+            act = act.view(-1).long()
+            act = F.one_hot(act, num_classes=action_space_size).float().to(self.device)
+
+        return torch.cat((img, act, reward), dim=1)
+
+    @torch.no_grad()
+    def lwe(self, X, action_space_size, reg=0.05, numItermax=2000):
+        X = self.preprocess_dataset(X, action_space_size)
+
+        # Ensure ref is on device
+        ref = self.ref
+        ref_size = ref.shape[0]
+
+        # Cost matrix on GPU (torch.cdist is fast)
+        C = ot.dist(X, ref, p=2)
+
+        # torch weights on same device/dtype
+        a = torch.full((X.shape[0],), 1.0 / X.shape[0], device=X.device, dtype=X.dtype)
+        b = torch.full((ref_size,), 1.0 / ref_size, device=ref.device, dtype=ref.dtype)
+
+        gamma = ot.emd(a, b, C, numItermax=700_000)
+
+        # Barycentric projection-style map (keep your formula)
+        f = (ref_size * gamma).T @ X
+        f = (f - ref) / (ref_size ** 0.5)
+
+        return f.reshape(-1)  # 1D tensor on GPU
       
     def calculate_lwes_distance(self, lwe1, lwe2):
         '''Calculates the Euclidian Distance of the old vs the new embedding
         It returns a 2D Tensor of size (num * Data-Batch sample size)'''
-        eu_dist = (lwe1 - lwe2).pow(2).ravel
+        eu_dist = (lwe1 - lwe2).pow(2).ravel()
         return eu_dist
 
     def pwdist(self, tasks_dict):

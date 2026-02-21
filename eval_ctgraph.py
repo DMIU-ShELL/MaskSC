@@ -59,7 +59,7 @@ def _plot_hm_betas(data, title, fname):
     for i in range(n_tasks):
         for j in range(n_tasks):
          text = ax.text(j, i, '{0:.2f}'.format(data[i, j]), ha='center', \
-            va='center', fontsize=16)
+            va='center', fontsize=5)
     ax.set_title(title, fontsize=20)
     fig.savefig(fname)
     plt.close(fig)
@@ -254,7 +254,11 @@ def ppo_ll_mctgraph(name, args):
     config.warmup_steps = 10000  # (Steps after which we stop changing selection)
     config.wte_momentum = 0.5    # (The alpha for the moving average)
 
-    agent = DetectLLAgent(config)
+    if args.variant in ['MaskLC', 'MaskBLC']:
+        agent = LLAgent(config)
+    elif args.variant == 'MaskSC':
+        agent = DetectLLAgent(config)
+
     config.agent_name = agent.__class__.__name__
     tasks = agent.config.cl_tasks_info
     config.cl_num_learn_blocks = 1
@@ -394,10 +398,47 @@ def ppo_ll_mctgraph(name, args):
     # targeted exploration for new task (the next task, after seen tasks, in the curriculum)
     # (i.e., agent's behaviour on the new task before any training is performed).
     te_num_tasks_seen = args.te_num_tasks_seen
-    agent = DetectLLAgent(config)
+    if args.variant in ['MaskLC', 'MaskBLC']:
+        agent = LLAgent(config)
+    elif args.variant == 'MaskSC':
+        agent = DetectLLAgent(config)
     model_path = '{0}/task_stats/{1}-{2}-model-{3}-run-1-task-{4}.bin'.format(\
         args.path, agent_name, tag, env_name, te_num_tasks_seen)
     agent = load_agent(agent, model_path, te_num_tasks_seen)
+
+    ### Sub-Analysis 4: Probe Transfer with Prior Masks 
+    # For a task t, evaluate zero/few-shot performance using each prior mask i<t
+    # (i.e., agent's behavior on the new task with previous knowledge for transfer learning)
+    '''probe_path = os.path.join(config.log_dir, "probe_utils_linear_comb.csv")
+    with open(probe_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["seed", "run_path", "current_task", "prior_task", "utility"])
+
+        tasks = agent.config.cl_tasks_info
+        for curr_idx, curr_task in enumerate(tasks):
+            if curr_idx == 0:
+                continue
+            # create/activate a new task mask for curr_idx
+            set_model_task(agent.network, curr_idx, new_task=True)
+            # zero betas for this row, then set prior contribution
+            for module in agent.network.modules():
+                if hasattr(module, "betas") and module.betas is not None:
+                    module.betas.data[curr_idx].zero_()
+                    module.betas.data[curr_idx, curr_idx] = 1.0  # trainable part
+                    module.betas.data[curr_idx, prior_idx] = 1.0  # prior contribution
+
+            agent.task_eval_start(curr_task["task_label"])
+            for prior_idx in range(curr_idx):
+                # inject prior into betas
+                for module in agent.network.modules():
+                    if hasattr(module, "betas") and module.betas is not None:
+                        module.betas.data[curr_idx].zero_()
+                        module.betas.data[curr_idx, curr_idx] = 1.0
+                        module.betas.data[curr_idx, prior_idx] = 1.0
+                # probe: zero/few-shot eval on task curr_idx
+                perf, _ = agent.evaluate_cl(num_iterations=1)  # or targeted exploration
+                writer.writerow([config.seed, config.log_dir, curr_idx, prior_idx, float(np.mean(perf))])
+            agent.task_eval_end()'''
 
     te_save_path = config.log_dir + '/targeted_exploration/'
     if not os.path.exists(te_save_path):
@@ -501,6 +542,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('algo', help='algorithm to run')
     parser.add_argument('path', help='path to experiment log')
+    parser.add_argument('--variant', help='Mask algorithm type', type=str, default='MaskLC')
     parser.add_argument('--env_name', help='name of the evaluation environment. ' \
         'minigrid and ctgraph currently supported', default='ctgraph')
     parser.add_argument('--env_config_path', help='path to environment config', \

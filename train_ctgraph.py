@@ -151,14 +151,11 @@ def ppo_ll_mctgraph(name, args):
     # Detect module
     config.detect_reference_num = 50
     config.detect_num_samples = 128
-    config.detect_emb_dist_threshold = 24
     config.detect_frequency = 1
     config.detect_fn = lambda input_dim, action_dim: Detect(config.detect_reference_num, input_dim, action_dim, config.detect_num_samples, one_hot=True, normalized=True)
-    config.detect_topk = 3  # Pick top 3 masks in pre-selection
+    config.detect_topk = 1  # Pick top 3 masks in pre-selection
     config.select_frequency = 5
-
-    config.warmup_steps = 10000  # (Steps after which we stop changing selection)
-    config.wte_momentum = 0.5    # (The alpha for the moving average)
+    config.select_strategy = args.select_strategy
 
     agent = DetectLLAgent(config)
     config.agent_name = agent.__class__.__name__
@@ -190,7 +187,9 @@ if __name__ == '__main__':
         'minigrid and ctgraph currently supported', default='ctgraph')
     parser.add_argument('--env_config_path', help='path to environment config', \
         default='./env_configs/ct28/seed1/meta_ctgraph_ct28_interleaved.json')
+        #./env_configs/ct28/seed1/meta_ctgraph_ct28_interleaved.json
         #./env_configs/ct28/seed1/meta_ctgraph_ct28_random.json
+        #./env_configs/ct28/seed1/meta_ctgraph_ct8_interleaved.json
         #./env_configs/ct28/seed1/meta_ctgraph_ct14_half_1.json
         #./env_configs/ct28/seed1/meta_ctgraph_ct14_half_2.json
         #./env_configs/ct28/seed1/meta_ctgraph_ct14_md.json
@@ -200,6 +199,8 @@ if __name__ == '__main__':
         default=51200*2, type=int)
     parser.add_argument('--new_task_mask', help='', \
         default='random', type=str)
+    parser.add_argument('--select_strategy', help='selection strategy: similarity or random_topk', \
+        default='similarity', choices=['similarity', 'random_topk'])
     parser.add_argument('--seed', help='seed for the experiment', default=8379, type=int)
     parser.add_argument('--pathheader', '--p', '-p', help='experiment header to log path for launcher.py', type=str, default='')
     args = parser.parse_args()

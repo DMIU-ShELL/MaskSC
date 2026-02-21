@@ -394,12 +394,36 @@ class MetaCTgraph(BaseTask):
             labels = labels.astype(np.float32) 
             for idx in range(len(self.tasks)):
                 self.tasks[idx]['task_label'] = labels[idx]
+
+        if 'filter_tasks' in env_meta_config.keys():
+            trajectories = [
+
+                [1, 0],
+                [1, 0, 0],
+                [1, 0, 0, 1],
+                [1, 0, 0, 1, 1],
+                [1, 0, 0, 1, 1, 1],
+                [1, 0, 0, 1, 1, 1, 0],
+                [1, 0, 0, 1, 1, 1, 0, 0],
+            ]
+            trajectories_set = {tuple(traj) for traj in trajectories}
+            
+            for task in self.tasks:
+                task_traj = tuple(task['task'])
+                if task_traj in trajectories_set:
+                    print(np.argmax(task['task_label'], axis=-1))
+
         if 'filter_tasks' in env_meta_config.keys():
             filtered_tasks = []
             for idx_ in env_meta_config['filter_tasks']:
                 filtered_tasks.append(self.tasks[idx_])
             self.tasks_ = self.tasks
             self.tasks = filtered_tasks
+
+        
+        for t in self.tasks:
+            print(list(t['task']))
+            
         # set default task
         self.set_task(self.tasks[0])
 

@@ -27,7 +27,8 @@ class BaseAgent:
         torch.save(self.network.state_dict(), filename)
 
     def load(self, filename):
-        state_dict = torch.load(filename, map_location=lambda storage, loc: storage)
+        # Explicitly allow loading full objects; torch 2.6 defaults to weights_only=True.
+        state_dict = torch.load(filename, map_location=lambda storage, loc: storage, weights_only=False)
         self.network.load_state_dict(state_dict)
 
     def evaluation_action(self, state):

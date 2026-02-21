@@ -114,6 +114,9 @@ def run_iterations_w_oracle(agent, tasks_info):
     # track how many times each task selected each prior task (for post-run summaries)
     selection_counts = [[0 for _ in range(num_tasks)] for _ in range(num_tasks)]
     eval_data_fh = open(config.logger.log_dir + '/eval_metrics.csv', 'a', buffering=1)
+    sims_csv_path = config.logger.log_dir + '/task_similarities.csv'
+    sims_csv_fh = open(sims_csv_path, 'w', buffering=1)
+    sims_csv_fh.write('learn_block,task_idx,iteration,total_steps,prev_idx,similarity,selected\n')
 
     eval_tracker = False
     eval_data = []
@@ -138,144 +141,83 @@ def run_iterations_w_oracle(agent, tasks_info):
             agent.states = config.state_normalizer(states)
             agent.data_buffer.clear()
             agent.task_train_start(task_info['task_label'])
-            """while True:
-                # train step
+
+            COS_TH = 0.5
+
+            while True:
+                # ---- agent iteration ----
                 dict_logs = agent.iteration()
-
                 iteration += 1
-                steps.append(agent.total_steps)
-                rewards.append(np.mean(agent.iteration_rewards))
 
-                # detect module
-                if hasattr(agent, 'detect'):
+                total_steps = agent.total_steps
+                steps.append(total_steps)
+                rewards.append(float(np.mean(agent.iteration_rewards)))
+
+                # ---- locals to reduce attribute overhead
+                cfg = agent.config
+                select_strategy = getattr(cfg, "select_strategy", "similarity")
+                detect_freq = getattr(cfg, "detect_frequency", 0) or 0
+                select_freq = getattr(cfg, "select_frequency", 0) or 0
+                detect_topk = getattr(cfg, "detect_topk", None)
+
+                # ---- detect / embedding update ----
+                if hasattr(agent, "detect") and select_strategy == "similarity":
                     if iteration != 0 and iteration % agent.config.detect_frequency == 0 and agent.data_buffer.size() >= (agent.detect.get_num_samples()):
                         # extract SAR batch of 128 samples
                         sar_data = agent.extract_sar()
-                        # compute new Wasserstein task embedding from batch
+
+                        # Update
                         new_embedding = agent.compute_task_embedding(sar_data, agent.task.action_dim)
-                        # get running task embedding for the task_idx
-                        current_embedding = agent.embedding_table[task_idx]
-                        # update the running embedding with new embedding if current_embedding is torch.zeros() otherwise update with moving average
-                        if current_embedding is None:
-                            agent.embedding_table[task_idx] = new_embedding
-                        else:
-                            agent.embedding_table[task_idx] = 0.5 * (new_embedding + current_embedding)
+                        agent._update_embedding(task_idx=task_idx, new_emb=new_embedding, ema=0.5)
 
-                    if iteration != 0 and iteration % agent.config.select_frequency == 0:
-                        # select all similar prior task embeddings above cosine threshold (if configured)
-                        if task_idx > 0:
-                            prior_sims = []
-                            curr_emb = agent.embedding_table[task_idx]
-                            for prev_idx in range(task_idx):
-                                prev_emb = agent.embedding_table.get(prev_idx, None)
-                                if prev_emb is None:
-                                    continue
-                                # cosine similarity in [-1,1]
-                                sim = torch.nn.functional.cosine_similarity(curr_emb, prev_emb, dim=0)
-                                prior_sims.append((sim.item(), prev_idx))
+                # ---- selection step ----
+                if iteration and select_freq and (iteration % select_freq == 0) and task_idx > 0:
+                    if select_strategy == "random_topk":
+                        candidate_indices = list(range(task_idx))
+                        k = min(getattr(cfg, "detect_topk", 0) or 0, task_idx)
+                        selected = np.random.choice(candidate_indices, size=k, replace=False).tolist() if k > 0 else []
 
-                            if len(prior_sims) > 0:
-                                prior_sims.sort(key=lambda x: x[0], reverse=True)
-                                selected = [idx for sim, idx in prior_sims if sim > 0.5]
-                                detect_topk = getattr(agent.config, 'detect_topk', None)
-                                if detect_topk is not None:
-                                    selected = selected[:detect_topk]
-                                if selected:
-                                    set_selected_task_indices(agent.network, selected)
-                                    for idx in selected:
-                                        selection_counts[task_idx][idx] += 1
-                                config.logger.info(f'Prior sims: {prior_sims}\nSelected: {selected}')"""
+                        if selected:
+                            set_selected_task_indices(agent.network, selected)
+                            for idx in selected:
+                                selection_counts[task_idx][idx] += 1
 
-            # Configuration additions suggested:
-            # config.warmup_steps = 10000  (Steps after which we stop changing selection)
-            # config.wte_momentum = 0.5    (The alpha for the moving average)
+                        selected_set = set(selected)
+                        # buffer writes
+                        lines = [
+                            f"{learn_block_idx},{task_idx},{iteration},{total_steps},{prev_idx},nan,{int(prev_idx in selected_set)}\n"
+                            for prev_idx in range(task_idx)
+                        ]
+                        sims_csv_fh.writelines(lines)
 
-            prior_embeddings_tensor = None # Cache for vectorized search
+                    elif select_strategy == "similarity":
+                        # select prior indices
+                        selected, sims = agent.select_similar(task_idx=task_idx, threshold=COS_TH, topk=detect_topk)
 
-            while True:
-                # 1. Train Step
-                dict_logs = agent.iteration()
-                iteration += 1
-                
-                # 2. WTE Update Phase (Expensive - do less often)
-                if hasattr(agent, 'detect') and iteration % agent.config.detect_frequency == 0:
-                    if agent.data_buffer.size() >= agent.detect.get_num_samples():
-                        # Extract batch and compute WTE
-                        sar_data = agent.extract_sar()
-                        new_embedding = agent.compute_task_embedding(sar_data, agent.task.action_dim)
-                        
-                        # Update Running Average with configurable momentum
-                        curr = agent.embedding_table.get(task_idx)
-                        alpha = agent.config.wte_momentum
-                        
-                        if curr is None:
-                            agent.embedding_table[task_idx] = new_embedding
-                        else:
-                            agent.embedding_table[task_idx] = (1 - alpha) * curr + alpha * new_embedding
+                        if selected:
+                            set_selected_task_indices(agent.network, selected)
+                            for idx in selected:
+                                selection_counts[task_idx][idx] += 1
 
-                # 3. Selection Phase (Cheap - but only do during warmup!)
-                # We check 'iteration < warmup_steps' to prevent "Beta Shock" later in training
-                is_warmup = iteration < getattr(agent.config, 'warmup_steps', float('inf'))
-                
-                if is_warmup and iteration % agent.config.select_frequency == 0 and task_idx > 0:
-                    
-                    # A. Vectorized Preparation
-                    # Stack all prior embeddings into a single tensor (N, Embedding_Dim)
-                    # We only rebuild this stack if we haven't cached it or if it changed
-                    if prior_embeddings_tensor is None or prior_embeddings_tensor.shape[0] != task_idx:
-                        priors = [agent.embedding_table.get(i) for i in range(task_idx)]
-                        # Filter out Nones if some tasks have no embedding yet
-                        valid_priors = [p for p in priors if p is not None]
-                        if valid_priors:
-                            prior_embeddings_tensor = torch.stack(valid_priors)
-                            prior_indices = [i for i, p in enumerate(priors) if p is not None]
-                        else:
-                            prior_embeddings_tensor = None
+                        selected_set = set(selected)
 
-                    # B. Vectorized Similarity
-                    curr_emb = agent.embedding_table.get(task_idx)
-                    
-                    if curr_emb is not None:
-                        # 1. Always rebuild the lists to ensure 'prior_indices' matches 'priors_tensor'
-                        priors = [agent.embedding_table.get(i) for i in range(task_idx)]
-                        valid_priors = [p for p in priors if p is not None]
-                        prior_indices = [i for i, p in enumerate(priors) if p is not None]
+                        # log sims for *existing* embeddings (fast + consistent with cache)
+                        # sims is aligned with agent._emb_indices
+                        lines = []
+                        sims_list = []
+                        if sims is not None:
+                            sims_cpu = sims.detach().float().cpu().tolist()
+                            for sim_val, prev_idx in zip(sims_cpu, agent._emb_indices):
+                                sims_list.append((sim_val, prev_idx))
+                                lines.append(
+                                    f"{learn_block_idx},{task_idx},{iteration},{total_steps},{prev_idx},{sim_val:.6f},{int(prev_idx in selected_set)}\n"
+                                )
+                            sims_csv_fh.writelines(lines)
+                            sims_list.sort(key=lambda x: x[0], reverse=True)
 
-                        if valid_priors:
-                            prior_embeddings_tensor = torch.stack(valid_priors)
-
-                            # 2. Vectorized Similarity
-                            sims = torch.nn.functional.cosine_similarity(
-                                curr_emb.unsqueeze(0), 
-                                prior_embeddings_tensor, 
-                                dim=1
-                            )
-
-                            # 3. Top-K Logic (Corrected)
-                            detect_topk = getattr(agent.config, 'detect_topk', 5)
-                            threshold = getattr(agent.config, 'similarity_threshold', 0.5)
-                            
-                            # Clamp k to available priors
-                            k = min(detect_topk, len(sims))
-                            
-                            top_scores, top_local_indices = torch.topk(sims, k)
-
-                            # Corrected List Comprehension using ZIP
-                            selected = [
-                                prior_indices[idx] 
-                                for score, idx in zip(top_scores.tolist(), top_local_indices.tolist()) 
-                                if score > threshold
-                            ]
-                            
-                            # Update the Agent
-                            if selected:
-                                current_selected = get_selected_task_indices(agent.network)
-                                # Only update if the set has actually changed to minimize overhead
-                                if set(selected) != set(current_selected):
-                                    set_selected_task_indices(agent.network, selected)
-                                    config.logger.info(f"Selection Updated at step {iteration}: {selected}")
+                        cfg.logger.info(f"Prior sims: {sims_list}\nSelected: {selected}")
                                 
-                # logging
+                # ---- logging iteration stats ----
                 if iteration % config.iteration_log_interval == 0:
                     itr_log_fn(config.logger, agent, iteration, dict_logs)
 
@@ -292,7 +234,7 @@ def run_iterations_w_oracle(agent, tasks_info):
                             tag = 'layer_output/' + tag
                             config.logger.histo_summary(tag, value.data.cpu().numpy())
 
-                # evaluation block
+                # ---- evaluation block ----
                 if (agent.config.eval_interval is not None and \
                     iteration % agent.config.eval_interval == 0):
                     config.logger.info('*****agent / evaluation block')
@@ -373,6 +315,7 @@ def run_iterations_w_oracle(agent, tasks_info):
         config.logger.info('********** end of learning block {0}\n'.format(learn_block_idx))
     # end for learning block
     eval_data_fh.close()
+    sims_csv_fh.close()
     if hasattr(agent, 'detect'):
         config.logger.info('***** selection counts (current task -> prior task: count)')
         print('selection counts (current task -> prior task: count)')
