@@ -21,6 +21,24 @@ except:
     # python == 2.7
     from pathlib2 import Path
 
+def _should_log_parameter_histograms(config, iteration):
+    if not getattr(config, 'log_parameter_histograms', False):
+        return False
+    interval = getattr(config, 'histogram_log_interval', None)
+    if interval is None:
+        interval = getattr(config, 'iteration_log_interval', 1)
+    interval = int(interval)
+    return interval > 0 and iteration % interval == 0
+
+def _should_save_iteration_snapshots(config, iteration):
+    if not getattr(config, 'save_iteration_snapshots', False):
+        return False
+    interval = getattr(config, 'iteration_snapshot_interval', None)
+    if interval is None:
+        interval = getattr(config, 'iteration_log_interval', 1)
+    interval = int(interval)
+    return interval > 0 and iteration % interval == 0
+
 def run_episodes(agent): # run episodes in single task setting
     config = agent.config
     random_seed(config.seed)
@@ -175,12 +193,13 @@ def run_iterations(agent): # run iterations single task setting
             config.logger.scalar_summary('min reward', np.min(agent.last_episode_rewards))
 
         #if iteration % (config.iteration_log_interval * 100) == 0:
-        if iteration % (config.iteration_log_interval) == 0:
+        if _should_save_iteration_snapshots(config, iteration):
             with open(config.log_dir + '/%s-%s-online-stats-%s.bin' % \
                 (agent_name, config.tag, agent.task.name), 'wb') as f:
                 pickle.dump({'rewards': rewards, 'steps': steps}, f)
             agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
                 agent.task.name))
+        if _should_log_parameter_histograms(config, iteration):
             for tag, value in agent.network.named_parameters():
                 tag = tag.replace('.', '/')
                 config.logger.histo_summary(tag, value.data.cpu().numpy())
@@ -253,12 +272,13 @@ def run_iterations_cl(agent, tasks_info): #run iterations continual learning (mu
                     config.logger.scalar_summary('min reward', np.min(agent.last_episode_rewards))
                     config.logger.scalar_summary('avg grad norm', avg_grad_norm)
 
-                if iteration % (config.iteration_log_interval) == 0:
+                if _should_save_iteration_snapshots(config, iteration):
                     with open(config.log_dir + '/%s-%s-online-stats-%s.bin' % \
                         (agent_name, config.tag, agent.task.name), 'wb') as f:
                         pickle.dump({'rewards': rewards, 'steps': steps}, f)
                     agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
                         agent.task.name))
+                if _should_log_parameter_histograms(config, iteration):
                     for tag, value in agent.network.named_parameters():
                         tag = tag.replace('.', '/')
                         config.logger.histo_summary(tag, value.data.cpu().numpy())
@@ -274,8 +294,9 @@ def run_iterations_cl(agent, tasks_info): #run iterations continual learning (mu
                         (agent_name, config.tag, agent.task.name, learn_block_idx+1, task_idx+1), 'wb') as f:
                         pickle.dump({'rewards': rewards[task_start_idx : ], \
                         'steps': steps[task_start_idx : ]}, f)
-                    agent.save(log_path_tstats +'/%s-%s-model-%s-run-%d-task-%d.bin' % (agent_name, \
-                        config.tag, agent.task.name, learn_block_idx+1, task_idx+1))
+                    if getattr(config, 'save_task_checkpoints', False):
+                        agent.save(log_path_tstats +'/%s-%s-model-%s-run-%d-task-%d.bin' % (agent_name, \
+                            config.tag, agent.task.name, learn_block_idx+1, task_idx+1))
                     agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
                         agent.task.name))
                     task_start_idx = len(rewards)

@@ -1,0 +1,14 @@
+\begin{table}[t]
+    \centering
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        Analysis & Mean seed $\rho$ & 95\% BCI & Sign-flip $p$ & Pooled $\rho$ \\
+        \midrule
+        Spearman & -0.012 & [-0.146, 0.128] & 0.922 & -0.018 \\
+        Partial Spearman (depth) & 0.006 & [-0.110, 0.143] & 0.922 & --- \\
+        \bottomrule
+    \end{tabular}
+    \caption{Association between early selected cosine similarity and per-task forward transfer. One correlation is computed across target tasks for each RL seed. The confidence interval resamples the seed-level coefficients, and the p-value uses an exact sign-flip test. The pooled coefficient is descriptive.}
+    \label{tbl:similarity_fwt_correlation}
+\end{table}

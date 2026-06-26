@@ -1,0 +1,25 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomWallObjectEnv-Wall-R2-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall2-R2-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall-R3-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall2-R3-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall-R4-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall2-R4-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall-R5-v0",
+        "CurriculumMultiRoomWallObjectEnv-Wall2-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 8,
+    "action_dim": 4,
+    "seeds": [
+        841,
+        842,
+        841,
+        842,
+        841,
+        842,
+        841,
+        842
+    ]
+}

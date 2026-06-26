@@ -1,0 +1,4 @@
+update_mode,update_label,support_size,same_family_precision,same_family_recall,any_same_family,parent_selected,mean_absolute_similarity_change,mean_within_pair_similarity_std
+masksc,$\gamma_{\mathrm{ema}}=0.5$,3.5833333333333335,0.5532407407407408,1.0,1.0,1.0,0.005148787051439284,0.004723012796697619
+no_ema,$\gamma_{\mathrm{ema}}=0$,3.5694444444444446,0.556712962962963,1.0,1.0,1.0,0.0057484622706066475,0.005079173815850594
+unit_input_ema,"unit-input EMA, $\gamma_{\mathrm{ema}}=0.5$",3.7291666666666665,0.525462962962963,1.0,1.0,1.0,0.0025168662269910175,0.0031954084210261842

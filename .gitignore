@@ -12,8 +12,12 @@ dataset
 draw_*
 log
 old_logs
+raw
 figure
 to_plot
+proxy_similarity_analysis
+transfer_analysis
+selection_analysis
 
 # C extensions
 *.so

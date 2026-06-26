@@ -1,0 +1,29 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomEnvV3-UpRight-R2-v0",
+        "CurriculumMultiRoomEnvV3-DownLeft-R2-v0",
+        "CurriculumMultiRoomEnvV3-UpRight-R3-v0",
+        "CurriculumMultiRoomEnvV3-DownLeft-R3-v0",
+        "CurriculumMultiRoomEnvV3-UpRight-R4-v0",
+        "CurriculumMultiRoomEnvV3-DownLeft-R4-v0",
+        "CurriculumMultiRoomEnvV3-UpRight-R5-v0",
+        "CurriculumMultiRoomEnvV3-DownLeft-R5-v0",
+        "CurriculumMultiRoomEnvV3-UpRight-R6-v0",
+        "CurriculumMultiRoomEnvV3-DownLeft-R6-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 10,
+    "action_dim": 4,
+    "seeds": [
+        840,
+        840,
+        840,
+        840,
+        840,
+        840,
+        840,
+        840,
+        840,
+        840
+    ]
+}

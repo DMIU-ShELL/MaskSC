@@ -1,0 +1,48 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R5-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R5-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R5-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 16,
+    "action_dim": 4,
+    "seeds": [
+        849,
+        850,
+        851,
+        852,
+        849,
+        850,
+        851,
+        852,
+        849,
+        850,
+        851,
+        852,
+        849,
+        850,
+        851,
+        852
+    ],
+    "sampled_object_remap_profiles": [
+        "BallLava",
+        "LavaBall",
+        "KeyBoxSwap",
+        "Identity"
+    ],
+    "config_seed": 849
+}

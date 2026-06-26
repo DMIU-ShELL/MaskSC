@@ -1,0 +1,21 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-LavaBall-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 4,
+    "action_dim": 4,
+    "seeds": [
+        866,
+        866,
+        866,
+        866
+    ],
+    "sampled_object_remap_profiles": [
+        "LavaBall"
+    ],
+    "config_seed": 865
+}

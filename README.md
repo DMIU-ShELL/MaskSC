@@ -37,11 +37,37 @@ python train_ctgraph.py baseline --seed 86
 python train_ctgraph.py ll_supermask --new_task_mask linear_comb --seed 86
 ```
 
+For the uncapped structure-aware CT28 oracle, use Oracle-All:
+
+```
+python train_ctgraph.py ll_supermask --new_task_mask linear_comb \
+    --select_strategy oracle_all --family_stride 4 --seed 86 \
+    --exp_id ct28-oracle-all
+```
+
+Oracle-All selects every available predecessor with the same task index
+modulo `family_stride`. It does not apply a similarity threshold, top-k cap,
+or performance-based eligibility filter.
+
 Full experiments were run using the commands:
 ```
 python launcher.py --env ctgraph_sc --exp ct28_mask_sc/
 ```
 which will produce the path `./log/ct28_mask_sc/` containing all seed runs.
+
+The launcher can override the MIG UUIDs stored in a command set:
+```
+# first set of seven MIG instances
+python launcher.py --env ctgraph_sc --exp ct28_mask_sc/ --gpu 0
+
+# second set of seven MIG instances
+python launcher.py --env ctgraph_sc --exp ct28_mask_sc/ --gpu 1
+
+# distribute commands across both sets
+python launcher.py --env ctgraph_sc --exp ct28_mask_sc/ --gpu 0 1
+```
+The bracketed form `--gpu "[0, 1]"` is also accepted. If `--gpu` is omitted,
+the launcher uses the MIG UUID specified by each command entry.
 
 The `launcher.py` script can also be used to run the single-task experts experiments which can be used to 
 

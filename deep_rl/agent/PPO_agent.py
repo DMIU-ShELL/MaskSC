@@ -115,8 +115,8 @@ class PPOContinualLearnerAgent(BaseContinualLearnerAgent):
         # same across all shell agents
         torch.manual_seed(config.seed)
         self.network = config.network_fn(self.task.state_dim, self.task.action_dim, label_dim)
-        _params = list(self.network.parameters())
-        self.opt = config.optimizer_fn(_params, config.lr)
+        self.opt_fn = config.optimizer_fn
+        self.opt = self.opt_fn(list(self.network.parameters()), config.lr)
         self.total_steps = 0
 
         self.episode_rewards = np.zeros(config.num_workers)
@@ -148,6 +148,9 @@ class PPOContinualLearnerAgent(BaseContinualLearnerAgent):
             self.last_episode_success_rate = None
             self.running_episodes_success_rate = None
             self.iteration_success_rate = None
+
+    def _reset_optimizer(self):
+        self.opt = self.opt_fn(list(self.network.parameters()), self.config.lr)
 
     def iteration(self):
         config = self.config
@@ -332,6 +335,8 @@ class BaselineAgent(PPOContinualLearnerAgent):
 
     def task_train_start(self, task_label):
         self.curr_train_task_label = task_label
+        if getattr(self.config, 'reset_optimizer_on_task_change', False):
+            self._reset_optimizer()
         return
 
     def task_train_end(self):
@@ -380,6 +385,8 @@ class LLAgent(PPOContinualLearnerAgent):
         else:
             set_model_task(self.network, task_idx)
         self.curr_train_task_label = task_label
+        if getattr(self.config, 'reset_optimizer_on_task_change', False):
+            self._reset_optimizer()
         return
 
     def task_train_end(self):
@@ -431,34 +438,41 @@ class DetectLLAgent(LLAgent):
         self._emb_matrix = None
         self._emb_row = {}
         self.device = 'cuda'
+        # Detect operates on flattened SAR vectors. For already-flat tasks this
+        # is unchanged; for image-shaped observations it uses the flattened size.
+        self.detect_input_dim = int(np.prod(self.task.state_dim))
 
         # Construct detect module
         self.detect = config.detect_fn(
-            self.task.state_dim, 
+            self.detect_input_dim,
             self.task.action_dim
         )
 
         # Set detect reference distribution
         self.detect.set_reference(
-            self.task.state_dim,
+            self.detect_input_dim,
             config.detect_reference_num,
             self.task.action_dim
         )
 
         # Pre-calculate embedding dim
-        self.task_emb_size  = self.detect.precalculate_embedding_size(config.detect_reference_num, self.task.state_dim, self.task.action_dim)
+        self.task_emb_size  = self.detect.precalculate_embedding_size(
+            config.detect_reference_num,
+            self.detect_input_dim,
+            self.task.action_dim,
+        )
         self.new_task_emb = None#torch.zeros(self.task_emb_size)
         for task_idx, _ in enumerate(self.config.cl_tasks_info):
             self.embedding_table[task_idx] = None
 
-    def extract_sar(self):
+    def extract_sar(self, batch_size=None):
         """Extracts (state, action, reward) tuples from the replay buffer
         and preprocesses them for further use. Updated to work optimally with torch.
 
         - Handles both discrete and continuous action spaces.
         - Ensures consistent shapes for concatenation.
         """
-        states, actions, rewards, _, _ = self.data_buffer.sample()
+        states, actions, rewards, _, _ = self.data_buffer.sample(batch_size=batch_size)
 
         # Ensure torch tensors
         if not isinstance(states, torch.Tensor):
@@ -507,10 +521,12 @@ class DetectLLAgent(LLAgent):
             updated = new_emb
             is_new = True
         else:
+            if not getattr(self.config, 'legacy_wte_ema', False):
+                new_emb = F.normalize(new_emb, dim=0, eps=1e-8)
             updated = ema * old + (1 - ema) * new_emb
             is_new = False
 
-        updated = F.normalize(updated, dim=0, eps=1e-8) # Most likely thing to break the system is right here
+        updated = F.normalize(updated, dim=0, eps=1e-8)
         self.embedding_table[task_idx] = updated
 
         if is_new:

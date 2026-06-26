@@ -1,0 +1,47 @@
+{
+  "analysis_unit": "seed_target_task",
+  "similarity_column": "selected_similarity_mean",
+  "similarity_aggregate": "mean",
+  "early_events": 10,
+  "num_seed_task_pairs": 168,
+  "num_seeds": 7,
+  "num_target_tasks": 24,
+  "seed_level_spearman": {
+    "num_seeds": 7,
+    "mean_rho": -0.01238608116523556,
+    "median_rho": -0.02729597200883065,
+    "ci_low": -0.14645554226573534,
+    "ci_high": 0.1282862120076162,
+    "sign_flip_p": 0.921875,
+    "sign_flip_exact": true
+  },
+  "pooled_descriptive_spearman": {
+    "rho": -0.018486221386946083,
+    "naive_p": 0.8120050353685807,
+    "n": 168
+  },
+  "task_mean_descriptive_spearman": {
+    "rho": 0.06882070162961162,
+    "naive_p": 0.7493232086015249,
+    "n": 24
+  },
+  "control_column": "depth",
+  "seed_level_partial_spearman": {
+    "num_seeds": 7,
+    "mean_rho": 0.006420512956605907,
+    "median_rho": -0.049230087571191294,
+    "ci_low": -0.11043081630734909,
+    "ci_high": 0.1425036557586646,
+    "sign_flip_p": 0.921875,
+    "sign_flip_exact": true
+  },
+  "method_root": "/home/lunet/cosn2/side_projects/LARA/mask-lrl-cluster-optimization/log/checklist_runs/ct28-interleaved-MaskSC-3-thesis",
+  "expert_root": "/home/lunet/cosn2/side_projects/LARA/mask-lrl-cluster-optimization/log/ct28/ct28-interleaved-single-task-experts-PPO",
+  "selection_events": "/home/lunet/cosn2/side_projects/LARA/mask-lrl-cluster-optimization/selection_analysis_ct28_masksc3/selection_events.csv",
+  "task_order_config": "/home/lunet/cosn2/side_projects/LARA/mask-lrl-cluster-optimization/env_configs/ct28/seed1/meta_ctgraph_ct28_interleaved.json",
+  "performance_normalization": "scalar",
+  "num_fwt_seed_task_pairs_before_selection_join": 196,
+  "num_selection_seed_task_pairs_before_fwt_join": 168,
+  "excluded_task_ids": [],
+  "minimum_events": 1
+}

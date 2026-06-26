@@ -40,6 +40,22 @@ def trapz_over_checkpoints(curve):
     return float(np.trapz(np.asarray(curve, dtype=np.float32), dx=1.0))
 
 
+def normalized_auc(curve, max_return):
+    """Return (auc, normalized_auc) for a uniformly sampled learning curve.
+
+    np.trapz over N evaluation points has a maximum area of max_return * (N - 1),
+    not max_return. The previous normalization divided by max_return directly,
+    which clipped most successful probe curves to 1.0 and made FWT nearly binary.
+    """
+    if len(curve) == 0:
+        return float("nan"), float("nan")
+    auc = trapz_over_checkpoints(curve)
+    if not max_return:
+        return auc, auc
+    max_area = float(max_return) * max(len(curve) - 1, 1)
+    return auc, float(np.clip(auc / max_area, 0.0, 1.0))
+
+
 def load_eval_matrix(run_dir):
     npy = os.path.join(run_dir, "eval_metrics.npy")
     csv = os.path.join(run_dir, "eval_metrics.csv")
@@ -304,9 +320,8 @@ def run_probe(args):
     agent.close()
 
     # AUC + optional FWT
-    auc = trapz_over_checkpoints(eval_curve) if eval_curve else float("nan")
     max_return = args.max_return
-    auc_norm = float(np.clip(auc / max_return, 0.0, 1.0)) if max_return else auc
+    auc, auc_norm = normalized_auc(eval_curve, max_return)
     expert_auc = float("nan")
     expert_auc_norm = float("nan")
     fwt = float("nan")
@@ -324,8 +339,7 @@ def run_probe(args):
                 emat = load_eval_matrix(expert_run)
                 if emat.shape[1] != 1:
                     raise ValueError(f"Expert run {expert_run} should have exactly one task column.")
-                expert_auc = trapz_over_checkpoints(emat[:, 0])
-                expert_auc_norm = float(np.clip(expert_auc / max_return, 0.0, 1.0)) if max_return else expert_auc
+                expert_auc, expert_auc_norm = normalized_auc(emat[:, 0], max_return)
                 denom = 1.0 - expert_auc_norm
                 if denom >= args.min_denominator:
                     fwt = (auc_norm - expert_auc_norm) / denom

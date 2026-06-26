@@ -1,0 +1,27 @@
+{
+"tasks": [
+    "CurriculumMultiRoomKey-A1-v0",
+    "CurriculumMultiRoomKey-B1-v0",
+    "CurriculumMultiRoomKey-C1-v0",
+    "CurriculumMultiRoomKey-D1-v0",
+    "CurriculumMultiRoomKey-E1-v0",
+    "CurriculumMultiRoomKey-F1-v0",
+    "CurriculumMultiRoomKey-A2-v0",
+    "CurriculumMultiRoomKey-A3-v0",
+    "CurriculumMultiRoomKey-A4-v0"
+],
+"one_hot": true,
+"label_dim": 9,
+"action_dim": 5,
+"seeds": [
+    13531623, 
+    13531623, 
+    13531623, 
+    13531623,
+    13531623, 
+    13531623, 
+    13531623,
+    13531623,
+    13531623
+]
+}

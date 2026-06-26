@@ -4,6 +4,8 @@
 # declaration at the top                                              #
 #######################################################################
 
+from copy import deepcopy
+
 from .network_utils import *
 from .network_bodies import *
 
@@ -340,6 +342,166 @@ class GaussianActorCriticNet_CL(nn.Module, BaseNet):
         entropy = entropy.sum(-1).unsqueeze(-1)
         return mean, action, log_prob, entropy, v, layers_output
 
+class _SACNetworkBase(nn.Module, BaseNet):
+    LOG_STD_MIN = -20.0
+    LOG_STD_MAX = 2.0
+    EPS = 1e-6
+
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 task_label_dim=None,
+                 phi_body=None,
+                 actor_body=None,
+                 critic_body=None):
+        super(_SACNetworkBase, self).__init__()
+        if phi_body is None:
+            phi_body = DummyBody_CL(state_dim, task_label_dim=task_label_dim)
+        if actor_body is None:
+            actor_body = FCBody_CL(phi_body.feature_dim, hidden_units=(256, 256), gate=F.relu)
+        if critic_body is None:
+            critic_body = FCBody_CL(phi_body.feature_dim + action_dim, hidden_units=(256, 256),
+                gate=F.relu)
+
+        self.action_dim = action_dim
+        self.task_label_dim = task_label_dim
+        self.phi_body = phi_body
+        self.actor_body = actor_body
+        self.critic1_body = critic_body
+        self.critic2_body = deepcopy(critic_body)
+
+    def _actor_features(self, obs, task_label=None, return_layer_output=False):
+        obs = tensor(obs)
+        if task_label is not None and not isinstance(task_label, torch.Tensor):
+            task_label = tensor(task_label)
+        layers_output = []
+        phi, out = self.phi_body(obs, task_label, return_layer_output, 'phi_body')
+        layers_output += out
+        phi_a, out = self.actor_body(phi, None, return_layer_output, 'actor_body')
+        layers_output += out
+        return phi, phi_a, layers_output
+
+    def _critic_features(self, obs, action, task_label=None, return_layer_output=False):
+        obs = tensor(obs)
+        action = tensor(action)
+        if task_label is not None and not isinstance(task_label, torch.Tensor):
+            task_label = tensor(task_label)
+        layers_output = []
+        phi, out = self.phi_body(obs, task_label, return_layer_output, 'phi_body')
+        layers_output += out
+        q_input = torch.cat([phi, action], dim=1)
+        phi_q1, out = self.critic1_body(q_input, None, return_layer_output, 'critic1_body')
+        layers_output += out
+        phi_q2, out = self.critic2_body(q_input, None, return_layer_output, 'critic2_body')
+        layers_output += out
+        return phi_q1, phi_q2, layers_output
+
+    def _inverse_squash(self, action):
+        action = action.clamp(-1.0 + self.EPS, 1.0 - self.EPS)
+        return 0.5 * (torch.log1p(action) - torch.log1p(-action))
+
+    def q(self, obs, action, task_label=None, return_layer_output=False):
+        phi_q1, phi_q2, layers_output = self._critic_features(obs, action, task_label,
+            return_layer_output)
+        q1 = self.fc_q1(phi_q1)
+        q2 = self.fc_q2(phi_q2)
+        if return_layer_output:
+            layers_output += [('critic_q1', q1), ('critic_q2', q2)]
+        return q1, q2, layers_output
+
+    def sample(self, obs, task_label=None, deterministic=False, return_layer_output=False,
+               with_logprob=True):
+        _, phi_a, layers_output = self._actor_features(obs, task_label, return_layer_output)
+        mean = self.fc_action(phi_a)
+        log_std = self.fc_log_std(phi_a)
+        log_std = torch.clamp(log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        std = torch.exp(log_std)
+        dist = torch.distributions.Normal(mean, std)
+        pre_tanh = mean if deterministic else dist.rsample()
+        action = torch.tanh(pre_tanh)
+
+        log_prob = None
+        if with_logprob:
+            log_prob = dist.log_prob(pre_tanh) - torch.log(1.0 - action.pow(2) + self.EPS)
+            log_prob = log_prob.sum(dim=1, keepdim=True)
+
+        entropy = dist.entropy().sum(dim=1, keepdim=True)
+        if return_layer_output:
+            layers_output += [('policy_mean', mean), ('policy_log_std', log_std),
+                ('policy_action', action)]
+        return action, log_prob, entropy, mean, log_std, layers_output
+
+    def log_prob(self, obs, action, task_label=None):
+        _, phi_a, _ = self._actor_features(obs, task_label, return_layer_output=False)
+        mean = self.fc_action(phi_a)
+        log_std = self.fc_log_std(phi_a)
+        log_std = torch.clamp(log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        std = torch.exp(log_std)
+        dist = torch.distributions.Normal(mean, std)
+        pre_tanh = self._inverse_squash(tensor(action))
+        action = torch.tanh(pre_tanh)
+        log_prob = dist.log_prob(pre_tanh) - torch.log(1.0 - action.pow(2) + self.EPS)
+        return log_prob.sum(dim=1, keepdim=True)
+
+    def predict(self, obs, action=None, task_label=None, return_layer_output=False, to_numpy=False,
+                deterministic=False):
+        sampled_action, log_prob, entropy, mean, _, layers_output = self.sample(
+            obs,
+            task_label=task_label,
+            deterministic=deterministic,
+            return_layer_output=return_layer_output,
+            with_logprob=True,
+        )
+        policy_action = torch.tanh(mean)
+        if to_numpy:
+            return policy_action.cpu().detach().numpy()
+
+        q1, q2, q_layers = self.q(obs, sampled_action, task_label=task_label,
+            return_layer_output=return_layer_output)
+        if return_layer_output:
+            layers_output += q_layers
+        value = torch.min(q1, q2)
+        return policy_action, sampled_action, log_prob, entropy, value, layers_output
+
+class SACTanhGaussianNet_SS(_SACNetworkBase):
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 task_label_dim=None,
+                 phi_body=None,
+                 actor_body=None,
+                 critic_body=None,
+                 num_tasks=3,
+                 new_task_mask='random'):
+        super(SACTanhGaussianNet_SS, self).__init__(state_dim, action_dim, task_label_dim,
+            phi_body, actor_body, critic_body)
+        discrete_mask = False
+        self.fc_action = MultitaskMaskLinear(self.actor_body.feature_dim, action_dim,
+            discrete=discrete_mask, num_tasks=num_tasks, new_mask_type=new_task_mask)
+        self.fc_log_std = MultitaskMaskLinear(self.actor_body.feature_dim, action_dim,
+            discrete=discrete_mask, num_tasks=num_tasks, new_mask_type=new_task_mask)
+        self.fc_q1 = MultitaskMaskLinear(self.critic1_body.feature_dim, 1,
+            discrete=discrete_mask, num_tasks=num_tasks, new_mask_type=new_task_mask)
+        self.fc_q2 = MultitaskMaskLinear(self.critic2_body.feature_dim, 1,
+            discrete=discrete_mask, num_tasks=num_tasks, new_mask_type=new_task_mask)
+        self.to(Config.DEVICE)
+
+class SACTanhGaussianNet_CL(_SACNetworkBase):
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 task_label_dim=None,
+                 phi_body=None,
+                 actor_body=None,
+                 critic_body=None):
+        super(SACTanhGaussianNet_CL, self).__init__(state_dim, action_dim, task_label_dim,
+            phi_body, actor_body, critic_body)
+        self.fc_action = layer_init(nn.Linear(self.actor_body.feature_dim, action_dim), 1e-3)
+        self.fc_log_std = layer_init(nn.Linear(self.actor_body.feature_dim, action_dim), 1e-3)
+        self.fc_q1 = layer_init(nn.Linear(self.critic1_body.feature_dim, 1), 1e-3)
+        self.fc_q2 = layer_init(nn.Linear(self.critic2_body.feature_dim, 1), 1e-3)
+        self.to(Config.DEVICE)
+
 class CategoricalActorCriticNet(nn.Module, BaseNet):
     def __init__(self,
                  state_dim,
@@ -438,4 +600,3 @@ class CategoricalActorCriticNet_CL(nn.Module, BaseNet):
             layers_output += [('policy_logits', logits), ('policy_action', action), ('value_fn', v)]
         log_prob = dist.log_prob(action).unsqueeze(-1)
         return logits, action, log_prob, dist.entropy().unsqueeze(-1), v, layers_output
-

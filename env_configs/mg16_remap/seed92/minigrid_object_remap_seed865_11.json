@@ -1,0 +1,18 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R4-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 1,
+    "action_dim": 4,
+    "seeds": [
+        868
+    ],
+    "sampled_object_remap_profiles": [
+        "BallLava",
+        "LavaBall",
+        "KeyBoxSwap",
+        "Identity"
+    ],
+    "config_seed": 865
+}

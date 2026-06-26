@@ -1,0 +1,41 @@
+{
+"tasks": [
+    "CurriculumMultiRoomKey-A1-v0",
+    "CurriculumMultiRoomKey-A2-v0",
+    "CurriculumMultiRoomKey-A3-v0",
+    "CurriculumMultiRoomKey-A4-v0",
+    "CurriculumMultiRoomKey-B1-v0",
+    "CurriculumMultiRoomKey-B2-v0",
+    "CurriculumMultiRoomKey-B3-v0",
+    "CurriculumMultiRoomKey-B4-v0",
+    "CurriculumMultiRoomKey-C1-v0",
+    "CurriculumMultiRoomKey-C2-v0",
+    "CurriculumMultiRoomKey-C3-v0",
+    "CurriculumMultiRoomKey-C4-v0",
+    "CurriculumMultiRoomKey-D1-v0",
+    "CurriculumMultiRoomKey-D2-v0",
+    "CurriculumMultiRoomKey-D3-v0",
+    "CurriculumMultiRoomKey-D4-v0"
+],
+"one_hot": true,
+"label_dim": 16,
+"action_dim": 5,
+"seeds": [
+    13531623, 
+    13531623, 
+    13531623, 
+    13531623, 
+    840, 
+    840, 
+    840, 
+    840, 
+    851, 
+    851, 
+    851, 
+    851, 
+    727, 
+    727, 
+    727, 
+    727
+]
+}

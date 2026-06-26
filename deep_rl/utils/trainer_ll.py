@@ -7,6 +7,87 @@ import torch
 from .torch_utils import *
 from ..mask_modules import set_selected_task_indices
 
+_PRIOR_SELECTION_STRATEGIES = frozenset({
+    'similarity',
+    'random_topk',
+    'oracle_all',
+})
+
+def _csv_float(value):
+    if value is None:
+        return 'nan'
+    try:
+        if not np.isfinite(value):
+            return 'nan'
+    except TypeError:
+        return 'nan'
+    return f'{float(value):.6f}'
+
+def _selection_perf_eligible(cfg, prior_idx, current_perf, prior_own_perf):
+    prior_perf = prior_own_perf[prior_idx]
+    if not np.isfinite(prior_perf):
+        return False
+
+    min_perf = getattr(cfg, 'selection_prior_min_perf', None)
+    if min_perf is not None and prior_perf < min_perf:
+        return False
+
+    if getattr(cfg, 'selection_require_prior_better_than_current', False):
+        margin = getattr(cfg, 'selection_prior_margin', 0.0)
+        if not np.isfinite(current_perf):
+            current_perf = 0.0
+        if prior_perf <= current_perf + margin:
+            return False
+
+    return True
+
+def _filter_selected_priors(cfg, selected, task_idx, latest_task_perf, prior_own_perf):
+    current_perf = latest_task_perf[task_idx]
+    return [
+        prior_idx for prior_idx in selected
+        if _selection_perf_eligible(cfg, prior_idx, current_perf, prior_own_perf)
+    ]
+
+def _select_oracle_all(task_idx, family_stride):
+    family_stride = int(family_stride)
+    if family_stride <= 0:
+        raise ValueError('family_stride must be a positive integer')
+    return [
+        prior_idx for prior_idx in range(task_idx)
+        if prior_idx % family_stride == task_idx % family_stride
+    ]
+
+def _reset_selected_priors_for_new_task(agent):
+    config = agent.config
+    select_strategy = getattr(config, 'select_strategy', None)
+    select_frequency = getattr(config, 'select_frequency', 0) or 0
+    if select_strategy not in _PRIOR_SELECTION_STRATEGIES or select_frequency <= 0:
+        return False
+
+    # A selector starts each task using only the current task mask. This
+    # prevents the selected set from the preceding task leaking into the
+    # warm-up period before the first selection event.
+    set_selected_task_indices(agent.network, [])
+    return True
+
+def _should_log_parameter_histograms(config, iteration):
+    if not getattr(config, 'log_parameter_histograms', False):
+        return False
+    interval = getattr(config, 'histogram_log_interval', None)
+    if interval is None:
+        interval = getattr(config, 'iteration_log_interval', 1)
+    interval = int(interval)
+    return interval > 0 and iteration % interval == 0
+
+def _should_save_iteration_snapshots(config, iteration):
+    if not getattr(config, 'save_iteration_snapshots', False):
+        return False
+    interval = getattr(config, 'iteration_snapshot_interval', None)
+    if interval is None:
+        interval = getattr(config, 'iteration_log_interval', 1)
+    interval = int(interval)
+    return interval > 0 and iteration % interval == 0
+
 def _itr_log(logger, agent, iteration, dict_logs):
     logger.info('iteration %d, total steps %d, mean/max/min reward %f/%f/%f'%(
         iteration, agent.total_steps,
@@ -113,10 +194,16 @@ def run_iterations_w_oracle(agent, tasks_info):
     num_tasks = len(tasks_info)
     # track how many times each task selected each prior task (for post-run summaries)
     selection_counts = [[0 for _ in range(num_tasks)] for _ in range(num_tasks)]
+    prior_own_perf = np.full(num_tasks, np.nan, dtype=np.float32)
+    latest_task_perf = np.full(num_tasks, np.nan, dtype=np.float32)
+    best_task_perf = np.full(num_tasks, -np.inf, dtype=np.float32)
     eval_data_fh = open(config.logger.log_dir + '/eval_metrics.csv', 'a', buffering=1)
     sims_csv_path = config.logger.log_dir + '/task_similarities.csv'
     sims_csv_fh = open(sims_csv_path, 'w', buffering=1)
-    sims_csv_fh.write('learn_block,task_idx,iteration,total_steps,prev_idx,similarity,selected\n')
+    sims_csv_fh.write(
+        'learn_block,task_idx,iteration,total_steps,prev_idx,similarity,'
+        'selected,prior_perf,current_perf,eligible\n'
+    )
 
     eval_tracker = False
     eval_data = []
@@ -141,8 +228,14 @@ def run_iterations_w_oracle(agent, tasks_info):
             agent.states = config.state_normalizer(states)
             agent.data_buffer.clear()
             agent.task_train_start(task_info['task_label'])
+            if _reset_selected_priors_for_new_task(agent):
+                config.logger.info(
+                    f'Reset selected priors for task {task_idx}; '
+                    'warm-up uses only the current task mask'
+                )
+            selected_once_for_task = False
 
-            COS_TH = 0.5
+            COS_TH = config.COS_TH
 
             while True:
                 # ---- agent iteration ----
@@ -159,45 +252,99 @@ def run_iterations_w_oracle(agent, tasks_info):
                 detect_freq = getattr(cfg, "detect_frequency", 0) or 0
                 select_freq = getattr(cfg, "select_frequency", 0) or 0
                 detect_topk = getattr(cfg, "detect_topk", None)
+                select_once_per_task = getattr(cfg, "select_once_per_task", False)
 
                 # ---- detect / embedding update ----
                 if hasattr(agent, "detect") and select_strategy == "similarity":
                     if iteration != 0 and iteration % agent.config.detect_frequency == 0 and agent.data_buffer.size() >= (agent.detect.get_num_samples()):
                         # extract SAR batch of 128 samples
-                        sar_data = agent.extract_sar()
+                        sar_data = agent.extract_sar(batch_size=config.detect_num_samples)
 
                         # Update
                         new_embedding = agent.compute_task_embedding(sar_data, agent.task.action_dim)
                         agent._update_embedding(task_idx=task_idx, new_emb=new_embedding, ema=0.5)
 
                 # ---- selection step ----
-                if iteration and select_freq and (iteration % select_freq == 0) and task_idx > 0:
-                    if select_strategy == "random_topk":
+                should_select = (
+                    iteration
+                    and select_freq
+                    and (iteration % select_freq == 0)
+                    and task_idx > 0
+                    and (not select_once_per_task or not selected_once_for_task)
+                )
+                if should_select:
+                    selection_attempted = False
+                    if select_strategy == "oracle_all":
+                        family_stride = getattr(cfg, "family_stride", None)
+                        if family_stride is None:
+                            raise ValueError(
+                                "select_strategy='oracle_all' requires config.family_stride"
+                            )
+                        selected = _select_oracle_all(task_idx, family_stride)
+                        selection_attempted = True
+
+                        # Oracle-All means every available same-family predecessor:
+                        # no similarity threshold, top-k cap, or competence filter.
+                        set_selected_task_indices(agent.network, selected)
+                        for idx in selected:
+                            selection_counts[task_idx][idx] += 1
+
+                        selected_set = set(selected)
+                        lines = [
+                            (
+                                f"{learn_block_idx},{task_idx},{iteration},{total_steps},"
+                                f"{prev_idx},nan,{int(prev_idx in selected_set)},"
+                                f"{_csv_float(prior_own_perf[prev_idx])},"
+                                f"{_csv_float(latest_task_perf[task_idx])},"
+                                f"{int(prev_idx in selected_set)}\n"
+                            )
+                            for prev_idx in range(task_idx)
+                        ]
+                        sims_csv_fh.writelines(lines)
+                        cfg.logger.info(
+                            f"Oracle-All priors (family_stride={family_stride}): {selected}"
+                        )
+
+                    elif select_strategy == "random_topk":
                         candidate_indices = list(range(task_idx))
                         k = min(getattr(cfg, "detect_topk", 0) or 0, task_idx)
-                        selected = np.random.choice(candidate_indices, size=k, replace=False).tolist() if k > 0 else []
+                        selected_raw = np.random.choice(candidate_indices, size=k, replace=False).tolist() if k > 0 else []
+                        selected = _filter_selected_priors(
+                            cfg, selected_raw, task_idx, latest_task_perf, prior_own_perf
+                        )
+                        selection_attempted = True
 
-                        if selected:
-                            set_selected_task_indices(agent.network, selected)
-                            for idx in selected:
-                                selection_counts[task_idx][idx] += 1
+                        set_selected_task_indices(agent.network, selected)
+                        for idx in selected:
+                            selection_counts[task_idx][idx] += 1
 
                         selected_set = set(selected)
                         # buffer writes
                         lines = [
-                            f"{learn_block_idx},{task_idx},{iteration},{total_steps},{prev_idx},nan,{int(prev_idx in selected_set)}\n"
+                            (
+                                f"{learn_block_idx},{task_idx},{iteration},{total_steps},"
+                                f"{prev_idx},nan,{int(prev_idx in selected_set)},"
+                                f"{_csv_float(prior_own_perf[prev_idx])},"
+                                f"{_csv_float(latest_task_perf[task_idx])},"
+                                f"{int(_selection_perf_eligible(cfg, prev_idx, latest_task_perf[task_idx], prior_own_perf))}\n"
+                            )
                             for prev_idx in range(task_idx)
                         ]
                         sims_csv_fh.writelines(lines)
+                        cfg.logger.info(f"Random priors: {selected_raw}\nFiltered selected: {selected}")
 
                     elif select_strategy == "similarity":
                         # select prior indices
-                        selected, sims = agent.select_similar(task_idx=task_idx, threshold=COS_TH, topk=detect_topk)
+                        selected_raw, sims = agent.select_similar(task_idx=task_idx, threshold=COS_TH, topk=detect_topk)
+                        selection_attempted = sims is not None
+                        selected = _filter_selected_priors(
+                            cfg, selected_raw, task_idx, latest_task_perf, prior_own_perf
+                        )
 
-                        if selected:
+                        if selection_attempted:
                             set_selected_task_indices(agent.network, selected)
-                            for idx in selected:
-                                selection_counts[task_idx][idx] += 1
+                        for idx in selected:
+                            selection_counts[task_idx][idx] += 1
 
                         selected_set = set(selected)
 
@@ -209,30 +356,44 @@ def run_iterations_w_oracle(agent, tasks_info):
                             sims_cpu = sims.detach().float().cpu().tolist()
                             for sim_val, prev_idx in zip(sims_cpu, agent._emb_indices):
                                 sims_list.append((sim_val, prev_idx))
+                                eligible = _selection_perf_eligible(
+                                    cfg, prev_idx, latest_task_perf[task_idx], prior_own_perf
+                                )
                                 lines.append(
-                                    f"{learn_block_idx},{task_idx},{iteration},{total_steps},{prev_idx},{sim_val:.6f},{int(prev_idx in selected_set)}\n"
+                                    (
+                                        f"{learn_block_idx},{task_idx},{iteration},{total_steps},"
+                                        f"{prev_idx},{sim_val:.6f},{int(prev_idx in selected_set)},"
+                                        f"{_csv_float(prior_own_perf[prev_idx])},"
+                                        f"{_csv_float(latest_task_perf[task_idx])},"
+                                        f"{int(eligible)}\n"
+                                    )
                                 )
                             sims_csv_fh.writelines(lines)
                             sims_list.sort(key=lambda x: x[0], reverse=True)
 
-                        cfg.logger.info(f"Prior sims: {sims_list}\nSelected: {selected}")
+                        cfg.logger.info(f"Prior sims: {sims_list}\nRaw selected: {selected_raw}\nFiltered selected: {selected}")
+
+                    if select_once_per_task and selection_attempted:
+                        selected_once_for_task = True
                                 
                 # ---- logging iteration stats ----
                 if iteration % config.iteration_log_interval == 0:
                     itr_log_fn(config.logger, agent, iteration, dict_logs)
 
-                    with open(config.log_dir + '/%s-%s-online-stats-%s.bin' % \
-                        (agent_name, config.tag, agent.task.name), 'wb') as f:
-                        pickle.dump({'rewards': rewards, 'steps': steps}, f)
-                    agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
-                        agent.task.name))
-                    for tag, value in agent.network.named_parameters():
-                        tag = tag.replace('.', '/')
-                        config.logger.histo_summary(tag, value.data.cpu().numpy())
-                    if hasattr(agent, 'layers_output'):
-                        for tag, value in agent.layers_output:
-                            tag = 'layer_output/' + tag
+                    if _should_save_iteration_snapshots(config, iteration):
+                        with open(config.log_dir + '/%s-%s-online-stats-%s.bin' % \
+                            (agent_name, config.tag, agent.task.name), 'wb') as f:
+                            pickle.dump({'rewards': rewards, 'steps': steps}, f)
+                        agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
+                            agent.task.name))
+                    if _should_log_parameter_histograms(config, iteration):
+                        for tag, value in agent.network.named_parameters():
+                            tag = tag.replace('.', '/')
                             config.logger.histo_summary(tag, value.data.cpu().numpy())
+                        if hasattr(agent, 'layers_output'):
+                            for tag, value in agent.layers_output:
+                                tag = 'layer_output/' + tag
+                                config.logger.histo_summary(tag, value.data.cpu().numpy())
 
                 # ---- evaluation block ----
                 if (agent.config.eval_interval is not None and \
@@ -250,7 +411,10 @@ def run_iterations_w_oracle(agent, tasks_info):
                         # rewards in other environments
                         perf, eps = agent.evaluate_cl(num_iterations=config.evaluation_episodes)
                         agent.task_eval_end()
-                        eval_data[-1][eval_task_idx] = np.mean(perf)
+                        mean_perf = float(np.mean(perf))
+                        eval_data[-1][eval_task_idx] = mean_perf
+                        latest_task_perf[eval_task_idx] = mean_perf
+                        best_task_perf[eval_task_idx] = max(best_task_perf[eval_task_idx], mean_perf)
                     _record = np.concatenate([eval_data[-1], np.array(time.time()).reshape(1,)])
                     np.savetxt(eval_data_fh, _record.reshape(1, -1), delimiter=',', fmt='%.4f')
                     del _record
@@ -272,11 +436,12 @@ def run_iterations_w_oracle(agent, tasks_info):
                         pickle.dump({'rewards': rewards[task_start_idx : ], \
                         'steps': steps[task_start_idx : ]}, f)
 
-                    if agent_name != 'BaselineAgent':
+                    if hasattr(agent, 'seen_tasks'):
                         config.logger.info('cacheing mask for current task')
                     ret = agent.task_train_end()
-                    agent.save(log_path_tstats +'/%s-%s-model-%s-run-%d-task-%d.bin' % (agent_name, \
-                        config.tag, agent.task.name, learn_block_idx+1, task_idx+1))
+                    if getattr(config, 'save_task_checkpoints', False):
+                        agent.save(log_path_tstats +'/%s-%s-model-%s-run-%d-task-%d.bin' % (agent_name, \
+                            config.tag, agent.task.name, learn_block_idx+1, task_idx+1))
                     agent.save(config.log_dir + '/%s-%s-model-%s.bin' % (agent_name, config.tag, \
                         agent.task.name))
                     task_start_idx = len(rewards)
@@ -292,6 +457,16 @@ def run_iterations_w_oracle(agent, tasks_info):
                 agent.evaluation_states = eval_states
                 perf, episodes = agent.evaluate_cl(num_iterations=config.evaluation_episodes)
                 eval_results[j] += perf
+                mean_perf = float(np.mean(perf))
+                latest_task_perf[j] = mean_perf
+                best_task_perf[j] = max(best_task_perf[j], mean_perf)
+                if j == task_idx:
+                    prior_own_perf[task_idx] = mean_perf
+                    config.logger.info(
+                        'stored prior own performance for task {0}: {1:.4f}'.format(
+                            task_idx, mean_perf
+                        )
+                    )
 
                 agent.task_eval_end()
 

@@ -1,0 +1,25 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallDoorSwap-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallDoorSwap-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallDoorSwap-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-Identity-R5-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallDoorSwap-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 8,
+    "action_dim": 4,
+    "seeds": [
+        841,
+        842,
+        841,
+        842,
+        841,
+        842,
+        841,
+        842
+    ]
+}

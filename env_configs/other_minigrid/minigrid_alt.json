@@ -1,0 +1,35 @@
+{
+"tasks": [
+    "MiniGrid-DoorKey-5x5-v0",
+    "MiniGrid-SimpleCrossingS9N1-v0",
+    "MiniGrid-LavaCrossingS9N1-v0",
+    "MiniGrid-LavaGapS5-v0",
+
+    "MiniGrid-DoorKey-8x8-v0",
+    "MiniGrid-SimpleCrossingS9N2-v0",
+    "MiniGrid-LavaCrossingS9N2-v0",
+    "MiniGrid-LavaGapS6-v0",
+
+    "MiniGrid-DoorKey-16x16-v0",
+    "MiniGrid-SimpleCrossingS9N3-v0",
+    "MiniGrid-LavaCrossingS9N3-v0",
+    "MiniGrid-LavaGapS7-v0"
+],
+"one_hot": true,
+"label_dim": 12,
+"action_dim": 5,
+"seeds": [
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840,
+    840
+]
+}

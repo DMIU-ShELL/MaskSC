@@ -1,0 +1,21 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-KeyBoxSwap-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 4,
+    "action_dim": 4,
+    "seeds": [
+        859,
+        859,
+        859,
+        859
+    ],
+    "sampled_object_remap_profiles": [
+        "KeyBoxSwap"
+    ],
+    "config_seed": 857
+}

@@ -51,6 +51,8 @@ class Logger(object):
     def to_numpy(self, v):
         if isinstance(v, torch.Tensor):
             v = v.cpu().detach().numpy()
+        elif isinstance(v, list) or isinstance(v, tuple):
+            v = np.asarray(v)
         return v
 
     def get_step(self, tag):
@@ -63,7 +65,7 @@ class Logger(object):
     def scalar_summary(self, tag, value, step=None):
         if self.skip:
             return
-        self.to_numpy(value)
+        value = self.to_numpy(value)
         if step is None:
             step = self.get_step(tag)
         if np.isscalar(value):
@@ -73,7 +75,9 @@ class Logger(object):
     def histo_summary(self, tag, values, step=None):
         if self.skip:
             return
-        self.to_numpy(values)
+        values = self.to_numpy(values)
+        if not torch.is_tensor(values):
+            values = torch.as_tensor(np.asarray(values))
         if step is None:
             step = self.get_step(tag)
         self.writer.add_histogram(tag, values, step, bins=1000)

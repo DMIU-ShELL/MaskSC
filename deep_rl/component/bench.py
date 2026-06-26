@@ -57,11 +57,19 @@ class Monitor(Wrapper):
         #print 'monitor step'
         if self.needs_reset:
             raise RuntimeError("Tried to step environment that needs reset")
-        ob, rew, done, info = self.env.step(action)
-        #print self.env
-        #print done
+
+        step_tuple = self.env.step(action)
+        if len(step_tuple) == 4:
+            ob, rew, done, info = step_tuple
+            truncated = False
+        elif len(step_tuple) == 5:
+            ob, rew, terminated, truncated, info = step_tuple
+            done = terminated or truncated
+        else: raise ValueError("Unexpected step tuple size; expected 4 or 5 elements.")
+
         self.rewards.append(rew)
-        if done:
+
+        if done or truncated:
             self.needs_reset = True
             eprew = sum(self.rewards)
             eplen = len(self.rewards)

@@ -1,0 +1,17 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomEnvV4-UpRight-R2-v0",
+        "CurriculumMultiRoomEnvV4-DownLeft-R2-v0",
+        "CurriculumMultiRoomEnvV4-UpRight-R3-v0",
+        "CurriculumMultiRoomEnvV4-DownLeft-R3-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 4,
+    "action_dim": 4,
+    "seeds": [
+        840,
+        840,
+        840,
+        840
+    ]
+}

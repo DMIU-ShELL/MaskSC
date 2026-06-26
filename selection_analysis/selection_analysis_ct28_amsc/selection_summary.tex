@@ -1,0 +1,15 @@
+\begin{table}[ht]
+    \caption{AMSC selection analysis. Oracle-relevant priors are earlier tasks from the same family.}
+    \label{tbl:amsc_selection}
+    \centering
+    \scriptsize
+    \begin{tabular}{lrrrrrrrrr}
+    \toprule
+Method & Support & Library frac. & Precision & Recall & Any correct & Jaccard & First found & Events to first & Steps to first \\
+    \midrule
+AMSC-no-norm & 4.468 & 0.493 & 0.663 & 0.999 & 1.000 & 0.988 & 1.000 & 1.000 & 512.000 \\
+AMSC-norm & 2.419 & 0.232 & 0.889 & 0.842 & 1.000 & 0.940 & 1.000 & 1.000 & 512.000 \\
+AMSC-shuffled & 2.274 & 0.224 & 0.196 & 0.175 & 0.473 & 0.182 & 1.000 & 2.571 & 1316.571 \\
+    \bottomrule
+    \end{tabular}
+\end{table}

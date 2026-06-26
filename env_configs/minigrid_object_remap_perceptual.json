@@ -1,0 +1,25 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-WallBoxDoorKey-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBallDoorKey-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBoxDoorKey-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBallDoorKey-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBoxDoorKey-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBallDoorKey-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBoxDoorKey-R5-v0",
+        "CurriculumMultiRoomObjectRemapEnv-WallBallDoorKey-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 8,
+    "action_dim": 4,
+    "seeds": [
+        841,
+        842,
+        841,
+        842,
+        841,
+        842,
+        841,
+        842
+    ]
+}

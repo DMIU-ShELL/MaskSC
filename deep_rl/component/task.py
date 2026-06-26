@@ -44,7 +44,15 @@ class BaseTask:
         return next_state, reward, done, info
 
     def seed(self, random_seed):
-        return self.env.seed(random_seed)
+        if hasattr(self.env, 'seed'):
+            return self.env.seed(random_seed)
+        try:
+            self.env.reset(seed=random_seed)
+        except TypeError:
+            # Some wrappers, e.g. MiniGrid's ReseedWrapper, own the reset seed
+            # and forward a duplicate seed kwarg if one is passed here.
+            self.env.reset()
+        return [random_seed]
 
 class ClassicalControl(BaseTask):
     def __init__(self, name, max_steps=200, log_dir=None):
@@ -473,12 +481,29 @@ class MetaCTgraphFlatObs(MetaCTgraph):
 
 class MiniGrid(BaseTask):
     TIME_LIMIT=200
+    @staticmethod
+    def _unpack_reset(ret):
+        if isinstance(ret, tuple) and len(ret) == 2:
+            return ret[0]
+        return ret
+
+    @staticmethod
+    def _unpack_step(ret):
+        if isinstance(ret, tuple) and len(ret) == 5:
+            state, reward, terminated, truncated, info = ret
+            return state, reward, terminated or truncated, info
+        return ret
+
     def __init__(self, name, env_config_path, log_dir=None, seed=1000, eval_mode=False):
         BaseTask.__init__(self)
         self.name = name
         from gym.wrappers import TimeLimit
         import gym_minigrid
-        from gym_minigrid.wrappers import ImgObsWrapper, ReseedWrapper, ActionBonus, StateBonus
+        from gym_minigrid.wrappers import ImgObsWrapper, ReseedWrapper, ActionBonus, StateBonus, RGBImgObsWrapper
+        #from CurriculumMinigrid import curriculum_multiroom_doors_env_v2, curriculum_multiroom_key_env_simple, curriculumMultiRoomEnv
+        #from CurriculumMinigrid import curriculumMultiRoomEnvV7, curriculumMultiRoomEnvV6, curriculumMultiRoomEnvV3, curriculumMultiRoomEnvWallColor
+        from CurriculumMinigrid import curriculumMultiRoomEnvObjectRemap
+
         self.wrappers_dict = {'ActionBonus': ActionBonus, 'StateBonus': StateBonus}
         with open(env_config_path, 'r') as f:
             env_config = json.load(f)
@@ -495,8 +520,16 @@ class MiniGrid(BaseTask):
             assert len(seeds) == len(env_names), 'number of seeds in config file should match'\
                 ' the number of tasks.'
         else: raise ValueError('invalid seed specification in config file')
+        self.envs = {}
+        #for name, seed in zip(env_names, seeds):
+            #if name in ["CurriculumMultiRoomKey-A1-v0", "CurriculumMultiRoomKey-B1-v0", "CurriculumMultiRoomKey-C1-v0", "CurriculumMultiRoomKey-D1-v0"]:
+            #    self.envs['{0}_seed{1}'.format(name, seed)] = ImgObsWrapper(gym.make(name))
+            #else:
+            #    self.envs['{0}_seed{1}'.format(name, seed)] = ReseedWrapper(ImgObsWrapper(gym.make(name)), seeds=[seed,])
+
         self.envs = {'{0}_seed{1}'.format(name, seed) : \
             ReseedWrapper(ImgObsWrapper(gym.make(name)), seeds=[seed,]) \
+            #ImgObsWrapper(gym.make(name)) \
             for name, seed in zip(env_names, seeds)}
         env_names = ['{0}_seed{1}'.format(name, seed) for name, seed in zip(env_names, seeds)]
         #self.envs = {name: TimeLimit(env, MiniGrid.TIME_LIMIT) for name, env in self.envs.items()}
@@ -540,13 +573,22 @@ class MiniGrid(BaseTask):
         self.current_task = self.tasks[0]
         self.env = self.envs[self.current_task['task']]
 
+        self.action_map = {
+            0: 0,  # left
+            1: 1,  # right
+            2: 2,  # forward
+            3: 5,  # toggle
+        }
+
     def step(self, action):
-        state, reward, done, info = self.env.step(action)
+        action = self.action_map[action]
+
+        state, reward, done, info = self._unpack_step(self.env.step(action))
         if done: state = self.reset()
         return state, reward, done, info
 
     def reset(self):
-        state = self.env.reset()
+        state = self._unpack_reset(self.env.reset())
         return state
 
     def reset_task(self, taskinfo):
@@ -571,14 +613,35 @@ class MiniGridFlatObs(MiniGrid):
         super(MiniGridFlatObs, self).__init__(name, env_config_path, log_dir, seed, eval_mode)
         self.state_dim = int(np.prod(self.env.observation_space.shape))
 
+        self.action_map = {
+            0: 0,  # left
+            1: 1,  # right
+            2: 2,  # forward
+            3: 5,  # toggle
+        }
+
     def step(self, action):
-        state, reward, done, info = self.env.step(action)
+        action = self.action_map[action]
+
+        state, reward, done, info = self._unpack_step(self.env.step(action))
         if done: state = self.reset()
         return state.ravel(), reward, done, info
 
     def reset(self):
-        state = self.env.reset()
+        state = self._unpack_reset(self.env.reset())
         return state.ravel()
+
+class CW12ObsWrapper(gym.ObservationWrapper):
+    IDX = np.array([0, 1, 2, 4, 5, 6, 11, 12, 13, 36, 37, 38], dtype=np.int64)
+
+    def __init__(self, env):
+        super().__init__(env)
+        low = env.observation_space.low[self.IDX].astype(np.float32)
+        high = env.observation_space.high[self.IDX].astype(np.float32)
+        self.observation_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
+
+    def observation(self, obs):
+        return obs[self.IDX].astype(np.float32)
 
 class ContinualWorld(BaseTask):
 
@@ -595,9 +658,10 @@ class ContinualWorld(BaseTask):
         # adapted from get_single_env in continualworld codebase.
         env = MT50.train_classes[task_name]()
         env = RandomizationWrapper(env, get_subtasks(task_name), randomization)
+        env = CW12ObsWrapper(env)   # Convert from 39-d obs to 12-d like original continual world paper
         # Currently TimeLimit is needed since SuccessCounter looks at dones.
-        #env = TimeLimit(env, META_WORLD_TIME_HORIZON)
-        env = TimeLimit(env, 500)
+        env = TimeLimit(env, META_WORLD_TIME_HORIZON)
+        #env = TimeLimit(env, 500)
         #env = SuccessCounter(env)
         env.name = task_name
         #env.num_envs = 1
@@ -816,7 +880,51 @@ class ProcessTask:
     
     def get_action_space(self):
         self.pipe.send([ProcessWrapper.ACTION_SPACE, None])
-        return self.pipe.recv()
+        return _deserialize_space(self.pipe.recv())
+
+
+def _serialize_space(space):
+    import gym
+
+    if isinstance(space, gym.spaces.Box):
+        return {
+            'type': 'box',
+            'low': np.asarray(space.low),
+            'high': np.asarray(space.high),
+            'shape': tuple(space.shape),
+            'dtype': np.dtype(space.dtype).str,
+        }
+    if isinstance(space, gym.spaces.Discrete):
+        return {'type': 'discrete', 'n': int(space.n)}
+    if isinstance(space, gym.spaces.MultiDiscrete):
+        return {'type': 'multidiscrete', 'nvec': np.asarray(space.nvec, dtype=np.int64)}
+    if isinstance(space, gym.spaces.MultiBinary):
+        return {'type': 'multibinary', 'n': int(space.n)}
+    return space
+
+
+def _deserialize_space(payload):
+    import gym
+
+    if not isinstance(payload, dict) or 'type' not in payload:
+        return payload
+
+    kind = payload['type']
+    if kind == 'box':
+        dtype = np.dtype(payload['dtype'])
+        return gym.spaces.Box(
+            low=np.asarray(payload['low'], dtype=dtype),
+            high=np.asarray(payload['high'], dtype=dtype),
+            shape=payload['shape'],
+            dtype=dtype,
+        )
+    if kind == 'discrete':
+        return gym.spaces.Discrete(payload['n'])
+    if kind == 'multidiscrete':
+        return gym.spaces.MultiDiscrete(np.asarray(payload['nvec'], dtype=np.int64))
+    if kind == 'multibinary':
+        return gym.spaces.MultiBinary(payload['n'])
+    raise ValueError('Unsupported action space payload type: {0}'.format(kind))
 
 class ProcessWrapper(mp.Process):
     STEP = 0
@@ -872,7 +980,7 @@ class ProcessWrapper(mp.Process):
             elif op == self.SET_CURR_TASK_INFO:
                 self.pipe.send(task.set_current_task_info(data[0], data[1]))
             elif op == self.ACTION_SPACE:
-                self.pipe.send(task.action_space)
+                self.pipe.send(_serialize_space(task.action_space))
             else:
                 raise Exception('Unknown command')
 

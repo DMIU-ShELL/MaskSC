@@ -1,0 +1,21 @@
+{
+    "tasks": [
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R2-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R3-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R4-v0",
+        "CurriculumMultiRoomObjectRemapEnv-BallLava-R5-v0"
+    ],
+    "one_hot": true,
+    "label_dim": 4,
+    "action_dim": 4,
+    "seeds": [
+        865,
+        865,
+        865,
+        865
+    ],
+    "sampled_object_remap_profiles": [
+        "BallLava"
+    ],
+    "config_seed": 865
+}
